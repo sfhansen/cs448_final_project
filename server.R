@@ -1,3 +1,6 @@
+# AUTHORS: Samuel Hansen & Shirbi Ish-Shalom
+# This is the server script for the Clickstream Explorer App
+
 #### Load necessary packages and data ####
 library(shiny)
 library(shinydashboard)
@@ -10,6 +13,9 @@ library(purrr)
 library(markovchain)
 library(sna)
 library(ggplot2)
+library(DTMCPack)
+library(LICORS)
+library(networkD3)
 
 # Parameters
 node_names <- c(
@@ -48,62 +54,85 @@ transition_matrix <- read_rds("trans_matrix.rds")
 clickstream_markovchain <- new("markovchain", states = as.character(seq(1,17,1)),
                                transitionMatrix = transition_matrix,
                                name = "clickstream_markovchain")
+# Unique invariant distribution exists if chain is irreducible and aperiodic
+if (is.irreducible(clickstream_markovchain) & period(clickstream_markovchain) == 1){
+  invariant_dist <- statdistr(transition_matrix) %>% c() 
+  # Otherwise no unique distribution exists, so set all pi to uniformly distributed 
+} else {
+  invariant_dist <- rep(1/nrow(transition_matrix),nrow(transition_matrix))
+}
 
-# Compute invariant distribution 
-invariant_dist <- statdistr(transitions_normalized) %>% c() 
-
+# Initialize Server
 server = function(input, output) {
-  
-  output$graph = renderPlot({
-    
-    # Filter out edges less than input probability threshold 
-    edgelist <- all_links %>%
-      # filter(link_value >= 0.1)
-      filter(link_value >= input$prob_thresh,
-             link_source != link_target) %>%
-      mutate(weighted_prob = link_value * 5)
-    
-    # Display network with probability labels toggeled ON 
-    if(input$show_prob_labels == TRUE) {
-      
-      # Round probabilities to display 2 digits 
-      edgelist <- edgelist %>%
-        dmap_at("link_value", ~signif(.x, digits = 2))
-      
-      # Construct network object
-      net <- network(edgelist, matrix = "edgelist", ignore.eval = FALSE,
-                     directed = TRUE, loops = FALSE) 
-      
-      # Set invariant distribution as vertex attribute 
-      net %v% "invariant_dist" = invariant_dist
-
-      # Display network with probability labels 
-      ggnet2(net, label = "vertex.names", 
-             label.color = "black", arrow.size = 12, arrow.gap = 0.025, 
-             edge.size = "weighted_prob", edge.label = "link_value", 
-             edge.label.size = 3, size = "invariant_dist") +
-        guides(color = FALSE, size = FALSE)
-
+  observe({
+    # Filter out edges less than input probability threshold
+    if(is.null(input$source_node_choice) || "All" %in% input$source_node_choice){
+      edgelist <- all_links %>%
+        filter(link_value >= input$prob_thresh,
+               link_source != link_target) %>%
+        mutate(weighted_prob = link_value * 5)
+      nodes = all_nodes %>%
+        filter(name %in% edgelist$link_source,
+               name %in% edgelist$link_target)
     } else {
-      # Construct network object without probability labels 
-      net <- network(edgelist, matrix = "edgelist", ignore.eval = FALSE,
-                     directed = TRUE, loops = FALSE) 
-      
-      # Set invariant distribution as vertex attribute 
-      net %v% "invariant_dist" = invariant_dist
-      
-      # Display network without probability labels 
-      ggnet2(net, label = "vertex.names", 
-             label.color = "black", arrow.size = 12, arrow.gap = 0.025, 
-             edge.size = "weighted_prob", size = "invariant_dist") + 
-        guides(color = FALSE, size = FALSE)
+      edgelist <- all_links %>%
+        filter(link_value >= input$prob_thresh,
+               link_source != link_target, 
+               link_source %in% input$source_node_choice) %>%
+        mutate(weighted_prob = link_value * 5)
+      nodes = all_nodes %>%
+        filter(name %in% edgelist$link_source,
+               name %in% edgelist$link_target)
     }
-  })
-  
-  output$heatmap = renderPlot({
     
-    all_links %>%
-      ggplot(mapping = aes(x = factor(link_target), factor(link_source))) +
+    # Render Markov graph
+    output$graph = renderPlot({
+      if(nrow(edgelist) > 1 ) {
+        # Display network with probability labels toggeled ON 
+        if(input$show_prob_labels == TRUE) {
+          
+          # Round probabilities to display 2 digits 
+          edgelist <- edgelist %>%
+            dmap_at("link_value", ~signif(.x, digits = 2))
+          
+          # Construct network object
+          net <- network(edgelist, matrix = "edgelist", ignore.eval = FALSE,
+                         directed = TRUE, loops = FALSE) 
+          
+          # Set invariant distribution as vertex attribute 
+          net %v% "invariant_dist" = invariant_dist
+          
+          # Display network with probability labels 
+          ggnet2(net, label = "vertex.names", 
+                 label.color = "black", arrow.size = 12, arrow.gap = 0.025, 
+                 edge.size = "weighted_prob", edge.label = "link_value", 
+                 edge.label.size = 3, size = "invariant_dist", 
+                 edge.lty = 1, max_size = 15, node.color = "steelblue3", 
+                 edge.color = "gray63") +
+            guides(color = FALSE, size = FALSE)
+        } else {
+          # Construct network object without probability labels 
+          net <- network(edgelist, matrix = "edgelist", ignore.eval = FALSE,
+                         directed = TRUE, loops = FALSE) 
+          
+          # Set invariant distribution as vertex attribute 
+          net %v% "invariant_dist" = invariant_dist
+          
+          # Display network without probability labels 
+          ggnet2(net, label = "vertex.names", 
+                 label.color = "gray34", arrow.size = 12, arrow.gap = 0.025, 
+                 edge.size = "weighted_prob", size = "invariant_dist", 
+                 edge.lty = 1, max_size = 15, node.color = "steelblue3", 
+                 edge.color = "gray67") + 
+            guides(color = FALSE, size = FALSE)
+        }
+      }
+    })
+    
+    # Render heatmap plot 
+    output$heatmap = renderPlot({
+      all_links %>%
+        ggplot(mapping = aes(x = factor(link_target), factor(link_source))) +
         geom_tile(mapping = aes(fill = log10(link_value)), colour = "white") +
         scale_fill_gradient(low = "white", high = "steelblue",
                             guide = guide_legend(title = "Log10\nProbability")) +
@@ -111,16 +140,14 @@ server = function(input, output) {
              title = "Markov Chain Transition Matrix") +
         scale_x_discrete(expand = c(0, 0)) +
         scale_y_discrete(expand = c(0, 0))
+    })
+    
+    output$table = renderDataTable({
+      # Filter out edges less than input probability threshold 
+      edgelist %>%
+        plyr::rename(c("link_source" = "Source",
+                       "link_target" = "Target",
+                       "link_value" = "Transition Probability"))
+    }, options = list(lengthMenu = c(10, 20, 50), pageLength = 10))
   })
-  
-  output$table = renderDataTable({
-    # Filter out edges less than input probability threshold 
-    all_links %>%
-      filter(link_value >= input$prob_thresh,
-             link_source != link_target) %>%
-      plyr::rename(c("link_source" = "Source",
-                     "link_target" = "Target",
-                     "link_value" = "Transition Probability"))
-  }, options = list(lengthMenu = c(10, 20, 50), pageLength = 10))
-  
 }
