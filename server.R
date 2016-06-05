@@ -1,3 +1,4 @@
+
 # AUTHORS: Samuel Hansen & Shirbi Ish-Shalom
 # This is the server script for the Clickstream Explorer App
 
@@ -84,6 +85,7 @@ server = function(input, output) {
         filter(name %in% edgelist$link_source,
                name %in% edgelist$link_target)
     }
+  
     
     # Render Markov graph
     output$graph = renderPlot({
