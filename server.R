@@ -15,8 +15,7 @@ library(markovchain)
 library(sna)
 library(ggplot2)
 library(DTMCPack)
-library(LICORS)
-library(networkD3)
+
 
 # Parameters
 node_names <- c(
